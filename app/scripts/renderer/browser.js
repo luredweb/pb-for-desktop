@@ -321,7 +321,7 @@ Notification = function(pushTitle, pushObject) {
     });
 
     // DEBUG
-    logger.devtools('Notification', notification.title);
+    logger.devtools('notification', notification.title);
 
     return notification;
 };
@@ -338,7 +338,7 @@ window.showNotification = function(push) {
     let isSnoozed = Boolean(remote.getGlobal('snoozeUntil'));
 
     // DEBUG
-    logger.devtools('isSnoozed', isSnoozed);
+    logger.devtools('snoozed', isSnoozed);
 
     if (Date.now() < remote.getGlobal('snoozeUntil')) {
         return;
@@ -415,13 +415,15 @@ window.enqueueRecentPushes = function(cb) {
 
 /**
  * Register single push for notification
- * @param {Object} pushObject - Pushbullet Push Object
+ * @param {Object} push - Push Object
  * @param {Function=} cb - Callback
  */
-window.enqueueSinglePush = function(pushObject, cb) {
+window.enqueueSinglePush = function(push, cb) {
+    // DEBUG
+    logger.devtools(`window.enqueueSinglePush()`, `length: ${Object.keys(push).length}`);
 
     let callback = cb || function() {},
-        pushesList = [pushObject];
+        pushesList = [push];
 
     window.enqueuePushes(pushesList, true, function(length) {
         callback(length);
@@ -485,7 +487,7 @@ window.createWSProxy = function() {
             set: function(target, name, value) {
                 if (name === 'connected') {
                     // DEBUG
-                    logger.devtools('pb.ws', 'connected', value);
+                    logger.devtools(`connected`);
                 }
                 target[name] = value;
             }
@@ -520,14 +522,18 @@ window.createPushProxy = function() {
         if (!window.pb) {
             return;
         }
+
         window.pb.api.pushes.objs = new Proxy(window.pb.api.pushes.objs, {
             set: function(target, name, push) {
-                // Check if push with unique id already as property exists
-                let pushIsNew = !Boolean(target[name]);
+                if (name in target) {
+                  return false;
+                }
 
-                // Check if it is a targeted push and if this App handles it
+                // Check if app handles push
                 let appIsTarget = true;
-                if (push.target_device_iden) {
+                if (push.target_device_iden &&
+                  window.pb.api.devices.objs[push.target_device_iden] &&
+                  window.pb.api.devices.objs[push.target_device_iden].model) {
                     if (window.pb.api.devices.objs[push.target_device_iden].model !== 'pb-for-desktop') {
                         appIsTarget = false;
                     }
@@ -535,11 +541,19 @@ window.createPushProxy = function() {
 
                 target[name] = push;
 
-                if (pushIsNew && appIsTarget) {
+                if (appIsTarget) {
                     window.enqueueSinglePush(push);
                 }
+
+                // DEBUG
+                logger.devtools('window.createPushProxy', `appIsTarget: ${appIsTarget}`);
+                logger.devtools('window.createPushProxy', `window.pb.api.pushes.objs[${name}]`);
+                logger.devtools('window.createPushProxy', `length: ${Object.keys(push).length}`);
             }
         });
+
+        // DEBUG
+        logger.devtools('window.createPushProxy');
 
         clearInterval(pollingInterval);
     }, defaultPollingInterval, this);
@@ -573,6 +587,9 @@ window.addWSMessageHandler = function() {
             if (pushObject && messageType === 'push') {
                 if (pushObject.type && pushObject.type === 'mirror') {
                     window.showNotification(pushObject);
+
+                    // DEBUG
+                    logger.devtools('window.addWSMessageHandler()', 'window.showNotification(pushObject)');
                 }
                 if (pushObject.type && pushObject.type === 'dismissal') {
                     // TODO: Implement mirror dismissals
@@ -673,7 +690,6 @@ window.addEventListener('offline', () => {
  * @fires ipcRenderer:ipcEvent#network
  */
 window.addEventListener('load', () => {
-
     let remoteStatus = Boolean(window.location.hostname) ? 'reachable' : 'unreachable';
 
     if (remoteStatus === 'reachable') {
